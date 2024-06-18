@@ -51,13 +51,12 @@ func (q *Collector) Describe(ch chan<- *prometheus.Desc) {
 	q.sendDescriptors(ch)
 }
 
-// Collect implement prometheus.Collector
-func (q *Collector) Collect(ch chan<- prometheus.Metric) {
+func (q *Collector) CollectWithContext(ctx context.Context, ch chan<- prometheus.Metric) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 	q.scrapeBegin = time.Now()
 	if q.cacheExpired() || q.Server.DisableCache {
-		q.execute()
+		q.execute(ctx)
 		q.cacheHit = false
 		q.scrapeDone = time.Now()
 		q.scrapeDuration = q.scrapeDone.Sub(q.scrapeBegin)
@@ -67,6 +66,11 @@ func (q *Collector) Collect(ch chan<- prometheus.Metric) {
 		q.scrapeDone = time.Now()
 	}
 	q.sendMetrics(ch) // the cache is already reset to zero even execute failed
+}
+
+// This shouldn't actually be invoked directly
+func (q *Collector) Collect(ch chan<- prometheus.Metric) {
+	q.CollectWithContext(context.Background(), ch)
 }
 
 // ResultSize report last scrapped metric count
@@ -90,7 +94,7 @@ func (q *Collector) CacheHit() bool {
 }
 
 // execute will run this query to registered server, result and err are registered
-func (q *Collector) execute() {
+func (q *Collector) execute(ctx context.Context) {
 	q.result = q.result[:0] // reset cache
 	var rows *sql.Rows
 	var err error
@@ -98,7 +102,8 @@ func (q *Collector) execute() {
 	// execution
 	if q.Timeout != 0 { // if timeout is provided, use context
 		logDebugf("query [%s] @ server [%s] executing begin with time limit: %v", q.Name, q.Server.Database, q.TimeoutDuration())
-		ctx, cancel := context.WithTimeout(context.Background(), q.TimeoutDuration())
+		// TODO should use WithDeadline here so it properly handles parent context deadline
+		ctx, cancel := context.WithTimeout(ctx, q.TimeoutDuration())
 		defer cancel()
 		rows, err = q.Server.QueryContext(ctx, q.SQL)
 	} else {

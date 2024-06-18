@@ -472,10 +472,14 @@ func (s *Server) Describe(ch chan<- *prometheus.Desc) {
 }
 
 // Collect implement prometheus.Collector interface
-func (s *Server) Collect(ch chan<- prometheus.Metric) {
+// Called via Exporter.Collect, not directly via Prometheus
+func (s *Server) CollectWithContext(ctx context.Context, ch chan<- prometheus.Metric) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	s.scrapeBegin = time.Now() // This ts is used for cache expiration check
+
+	var ok bool
+	var groups []string
 
 	// check server conn, gathering fact
 	if s.err = s.Check(); s.err != nil {
@@ -488,8 +492,17 @@ func (s *Server) Collect(ch chan<- prometheus.Metric) {
 		s.Plan()
 	}
 
+	groups, ok = ctx.Value(groupsContextKey{}).([]string)
+	if !ok {
+		groups = nil
+    }
+
 	for _, query := range s.Collectors {
-		query.Collect(ch)
+		if groups != nil && !query.InGroups(groups) {
+			// TODO update metric for query skipped due to group not requested?
+			continue
+		}
+		query.CollectWithContext(ctx, ch)
 		s.queryCacheTTL[query.Name] = query.cacheTTL()
 		s.queryScrapeTotalCount[query.Name]++
 		s.queryScrapeMetricCount[query.Name] = float64(query.ResultSize())
@@ -525,6 +538,12 @@ final:
 			s.Name(), s.scrapeDone.Sub(s.scrapeBegin).Seconds())
 	}
 }
+
+// This should be unused
+func (s *Server) Collect(ch chan<- prometheus.Metric) {
+	s.CollectWithContext(context.Background(), ch)
+}
+
 
 // HasTag tells whether this server have specific tag
 func (s *Server) HasTag(tag string) bool {

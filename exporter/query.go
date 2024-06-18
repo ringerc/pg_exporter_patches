@@ -6,6 +6,7 @@ import (
 	"gopkg.in/yaml.v3"
 	"text/template"
 	"time"
+	"strings"
 )
 
 /**********************************************************************************************\
@@ -181,4 +182,22 @@ func (q *Query) MetricList() (res []*MetricDesc) {
 // TimeoutDuration will turn timeout settings into time.Duration
 func (q *Query) TimeoutDuration() time.Duration {
 	return time.Duration(float64(time.Second) * q.Timeout)
+}
+
+// InGroups tells whether this query is in specific groups
+// by matching tags with "group:" prefix. If any of the tags
+// match any of the groups, return true. It's O(N^2) complexity
+// but we don't really care about it since the number of tags
+// and groups should both be very small.
+func (q *Query) InGroups(groups []string) bool {
+	for _, tag := range q.Tags {
+		if strings.HasPrefix(tag, "group:") {
+			for _, group := range groups {
+				if tag[6:] == group {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

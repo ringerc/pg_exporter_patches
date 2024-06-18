@@ -10,7 +10,6 @@ import (
 	"syscall"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/exporter-toolkit/web"
 )
 
@@ -157,7 +156,6 @@ func Run() {
 		os.Exit(0)
 	}
 
-	prometheus.MustRegister(PgExporter)
 	defer PgExporter.Close()
 
 	// reload conf when receiving SIGHUP or SIGUSR1
@@ -204,7 +202,8 @@ func Run() {
 	// metric
 	_ = dummySrv.Close()
 	<-closeChan
-	http.Handle(*metricPath, promhttp.Handler())
+
+	http.Handle(*metricPath, newPrometheusHandler(PgExporter))
 
 	logInfof("pg_exporter for %s start, listen on http://%s%s", ShadowPGURL(*pgURL), listenAddr, *metricPath)
 

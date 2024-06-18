@@ -2,6 +2,7 @@ package exporter
 
 import (
 	"fmt"
+	"context"
 	"github.com/prometheus/client_golang/prometheus"
 	"net/http"
 	"sync"
@@ -97,20 +98,29 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	e.server.Describe(ch)
 }
 
-// Collect implement prometheus.Collector
-func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
+func (e *Exporter) CollectWithContext(ctx context.Context, ch chan<- prometheus.Metric) {
 	e.lock.Lock()
 	defer e.lock.Unlock()
 	e.scrapeTotalCount.Add(1)
 
+	groups, ok := ctx.Value(groupsContextKey{}).([]string)
+	if ok {
+		logDebugf("scrape groups in server: %v", groups)
+	} else {
+		logDebugf("scrape groups in server: all")
+	}
+
 	e.scrapeBegin = time.Now()
 	// scrape primary server
 	s := e.server
-	s.Collect(ch)
+	s.CollectWithContext(ctx, ch)
 
 	// scrape extra servers if exists
+	// This could be parallelized into goroutines to better handle scrapes
+	// of many DBs, probably by using a sync.WaitGroup or putting each in
+	// a separate Registry then scraping them with prometheus.Gather.
 	for _, srv := range e.IterateServer() {
-		srv.Collect(ch)
+		srv.CollectWithContext(ctx, ch)
 	}
 	e.scrapeDone = time.Now()
 
@@ -131,6 +141,15 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	e.exporterUptime.Set(e.server.Uptime())
 	e.collectServerMetrics(s)
 	e.collectInternalMetrics(ch)
+}
+
+// Collect implement prometheus.Collector
+//
+// This is the top level Collector that's actually registered with Prometheus.
+// It delegates to each Server.
+//
+func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
+	e.CollectWithContext(context.Background(), ch)
 }
 
 func (e *Exporter) collectServerMetrics(s *Server) {
